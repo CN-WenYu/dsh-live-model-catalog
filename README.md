@@ -22,21 +22,44 @@ DSH 里有两个独立的缺口，症状不同、根因不同：
 
 ## 安装
 
+大多数人用的就是 `web` profile（`dsh web` 是它的启动别名），所以下面直接写 `web`：
+
 ```sh
 # 现在就能用：尚未发布到 npm，直接从仓库装
-dsh plugin --profile <你的 profile> add github:CN-WenYu/dsh-live-model-catalog
+dsh plugin --profile web add github:CN-WenYu/dsh-live-model-catalog
 
 # 发布到 npm 之后
-dsh plugin --profile <你的 profile> add dsh-live-model-catalog
+dsh plugin --profile web add dsh-live-model-catalog
 
 # 本地开发：link 安装，改代码即时生效
-dsh plugin --profile <你的 profile> add link:<本仓库路径>
+dsh plugin --profile web add link:<本仓库路径>
+```
+
+示例——安装后重启，插件才会加载：
+
+```sh
+dsh plugin --profile web add github:CN-WenYu/dsh-live-model-catalog
+dsh web
+```
+
+示例——profile 不叫 `web` 时，把它换成 `$DSH_HOME/profiles/` 下的目录名（例如 `tui`）：
+
+```sh
+dsh plugin --profile tui add github:CN-WenYu/dsh-live-model-catalog
+dsh --profile tui
 ```
 
 装完**必须重启正在运行的 profile**。卸载：
 
 ```sh
-dsh plugin --profile <你的 profile> remove dsh-live-model-catalog
+dsh plugin --profile web remove dsh-live-model-catalog
+```
+
+示例——卸载后同样要重启，运行中的进程才会不再加载本插件：
+
+```sh
+dsh plugin --profile web remove dsh-live-model-catalog
+dsh web
 ```
 
 ### 装完就能拿到新模型吗
@@ -231,7 +254,7 @@ npm run check      # 语法检查
 - **只想快跑纯逻辑**：把 `lib/` 和 `test/{apply,merge,typing,plan,translate,listing,routes,report}.test.mjs` 拷到任意空目录，`node --test "test/*.test.mjs"` 就能跑（**不需要 `node_modules`**）。
 - **服务名变了** → 报错会点名（`settings` / `credentials` / `llm` / `commands`），改 `lib/index.js` 与对应模块里的 `ctx.get(...)`。
 - **模块 B 报 `unsupported`** → 说明 `llm.discoveries` 形状变了，把 `fixDiscovery` 关掉即可恢复（运行期即生效，无需重启）；要重做就看 `lib/discovery.js` 的 `probeDiscovery`。
-- 改完执行 `dsh plugin --profile <你的 profile> add link:<该路径>`（pnpm 是快照安装，需重跑）并重启 profile。
+- 改完执行 `dsh plugin --profile web add link:<该路径>`（pnpm 是快照安装，需重跑）并重启 profile（例如 `dsh web`）。
 
 代码分层（每层都可以单独替换）：
 

@@ -22,21 +22,44 @@ What this plugin does: read each managed route's own `GET {baseURL}/models`, and
 
 ## Install
 
+Most people use the `web` profile (`dsh web` is its boot alias), so the commands below spell it out:
+
 ```sh
 # Works today: not published to npm yet, so install it straight from the repository
-dsh plugin --profile <your profile> add github:CN-WenYu/dsh-live-model-catalog
+dsh plugin --profile web add github:CN-WenYu/dsh-live-model-catalog
 
 # Once it is on npm
-dsh plugin --profile <your profile> add dsh-live-model-catalog
+dsh plugin --profile web add dsh-live-model-catalog
 
 # Local development: a link install, so code edits take effect immediately
-dsh plugin --profile <your profile> add link:<this repo>
+dsh plugin --profile web add link:<this repo>
+```
+
+Example — restart after installing, or the plugin is never loaded:
+
+```sh
+dsh plugin --profile web add github:CN-WenYu/dsh-live-model-catalog
+dsh web
+```
+
+Example — if the profile is not named `web`, use its directory name under `$DSH_HOME/profiles/` instead (say `tui`):
+
+```sh
+dsh plugin --profile tui add github:CN-WenYu/dsh-live-model-catalog
+dsh --profile tui
 ```
 
 **Restart the running profile afterwards.** To remove:
 
 ```sh
-dsh plugin --profile <your profile> remove dsh-live-model-catalog
+dsh plugin --profile web remove dsh-live-model-catalog
+```
+
+Example — removing needs the same restart before the running process stops loading the plugin:
+
+```sh
+dsh plugin --profile web remove dsh-live-model-catalog
+dsh web
 ```
 
 ### Do I get new models right after installing?
@@ -245,7 +268,7 @@ npm run check      # syntax check
 - **Just want the pure logic fast**: copy `lib/` and `test/{apply,merge,typing,plan,translate,listing,routes,report}.test.mjs` into any empty directory and run `node --test "test/*.test.mjs"` (**no `node_modules` needed**).
 - **A service name changed** → the error names it (`settings` / `credentials` / `llm` / `commands`); fix `ctx.get(...)` in `lib/index.js` and the matching module.
 - **Module B reports `unsupported`** → the `llm.discoveries` shape moved; turn `fixDiscovery` off to recover (effective at runtime, no restart). To redo it, read `probeDiscovery` in `lib/discovery.js`.
-- After an edit, re-run `dsh plugin --profile <your profile> add link:<path>` (pnpm installs a snapshot) and restart the profile.
+- After an edit, re-run `dsh plugin --profile web add link:<path>` (pnpm installs a snapshot) and restart the profile (for example `dsh web`).
 
 Layering (every layer can be replaced on its own):
 
