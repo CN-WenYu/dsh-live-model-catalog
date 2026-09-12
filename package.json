@@ -1,0 +1,44 @@
+{
+  "name": "dsh-live-model-catalog",
+  "version": "0.1.0",
+  "description": "Keep DSH llm-pi-ai provider routes in step with each provider's own live /models endpoint: adds new model ids and fills contextWindow / maxTokens / input / reasoningEfforts through the official settings seam.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'",
+    "check": "node --check lib/constants.js && node --check lib/endpoints.js && node --check lib/index.js && node --check lib/config.js && node --check lib/listing.js && node --check lib/translate.js && node --check lib/merge.js && node --check lib/typing.js && node --check lib/plan.js && node --check lib/routes.js && node --check lib/apply.js && node --check lib/discovery.js && node --check lib/report.js"
+  },
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
+  "files": [
+    "lib",
+    "test",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "pi-ai",
+    "models",
+    "catalog",
+    "openrouter",
+    "reasoning-effort"
+  ],
+  "license": "MIT"
+}

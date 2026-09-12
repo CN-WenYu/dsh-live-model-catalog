@@ -1,0 +1,8 @@
+# dsh-live-model-catalog bundle patch.
+#
+# Mounts the host half as a Loader entry. `dsh plugin add` reconciles
+# dsh.profile.bundles against this declaration and appends the package name,
+# so a normal install needs no profile file edits.
+- insert:
+    - id: live-model-catalog
+      name: 'dsh-live-model-catalog'
