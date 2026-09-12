@@ -23,8 +23,14 @@ What this plugin does: read each managed route's own `GET {baseURL}/models`, and
 ## Install
 
 ```sh
-dsh plugin --profile <your profile> add dsh-live-model-catalog   # from npm
-dsh plugin --profile <your profile> add link:<this repo>          # local development (link install; edits take effect immediately)
+# Works today: not published to npm yet, so install it straight from the repository
+dsh plugin --profile <your profile> add github:CN-WenYu/dsh-live-model-catalog
+
+# Once it is on npm
+dsh plugin --profile <your profile> add dsh-live-model-catalog
+
+# Local development: a link install, so code edits take effect immediately
+dsh plugin --profile <your profile> add link:<this repo>
 ```
 
 **Restart the running profile afterwards.** To remove:

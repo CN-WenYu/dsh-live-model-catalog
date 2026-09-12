@@ -23,8 +23,14 @@ DSH 里有两个独立的缺口，症状不同、根因不同：
 ## 安装
 
 ```sh
-dsh plugin --profile <你的 profile> add dsh-live-model-catalog   # 从 npm 装
-dsh plugin --profile <你的 profile> add link:<本仓库路径>          # 本地开发（link 安装，改代码即时生效）
+# 现在就能用：尚未发布到 npm，直接从仓库装
+dsh plugin --profile <你的 profile> add github:CN-WenYu/dsh-live-model-catalog
+
+# 发布到 npm 之后
+dsh plugin --profile <你的 profile> add dsh-live-model-catalog
+
+# 本地开发：link 安装，改代码即时生效
+dsh plugin --profile <你的 profile> add link:<本仓库路径>
 ```
 
 装完**必须重启正在运行的 profile**。卸载：
