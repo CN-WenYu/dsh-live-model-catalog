@@ -298,3 +298,62 @@ test('an unreadable snapshot bound withholds additions instead of unbinding them
     harness.restore();
   }
 });
+
+test('a route declaration fills reasoning its endpoint never publishes, end to end', async () => {
+  // `deepseek/deepseek-chat` is listed with no reasoning block at all — the
+  // SenseNova shape. Nothing about the endpoint could have produced this fill.
+  const silentEndpoint = {
+    providers: {
+      sensenova: {
+        api: 'openai-completions',
+        baseURL: 'https://gateway.example/v1',
+        apiKeyEnv: 'SENSE_KEY',
+        models: [{ id: 'deepseek/deepseek-chat' }],
+      },
+    },
+  };
+  const harness = await run({ routes: { sensenova: { efforts: { low: 'low', high: 'high' } } } }, LISTING, {
+    llmUser: silentEndpoint,
+  });
+  try {
+    assert.equal(harness.state.writes.length, 1, harness.state.log.join('\n'));
+    const [{ ops }] = harness.state.writes;
+    assert.deepEqual(ops[0].value[0], { id: 'deepseek/deepseek-chat', reasoningEfforts: { low: 'low', high: 'high' } });
+    assert.equal(
+      'reasoningEfforts' in ops[0].value.find((model) => model.id === 'qwen/qwen9-future'),
+      false,
+      'an id this round only discovered keeps the endpoint’s own answer; the declaration fills it on the next round, once it is configured',
+    );
+    const result = await harness.state.command.handler({ rawInput: '' });
+    assert.match(result.text, /~ deepseek\/deepseek-chat → reasoningEfforts/);
+    assert.match(result.text, /路由档位声明补齐/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('a protocol with no readable listing is left to the official refusal, not probed', async () => {
+  const nativeOnly = {
+    providers: {
+      google: { api: 'google-generative-ai', baseURL: 'https://generativelanguage.example/v1beta', apiKeyEnv: 'G_KEY', models: [{ id: 'gemini-x' }] },
+    },
+  };
+  const harness = await run({ fixDiscovery: true }, LISTING, { llmUser: nativeOnly });
+  try {
+    const wrapper = harness.discoveries.get('llm-pi-ai');
+    assert.deepEqual(await wrapper({ provider: 'google' }), [{ id: 'snapshot/only' }], 'the official answer, not a bogus probe');
+    assert.equal(harness.calls.length, 0, 'no request is made to a URL this protocol does not have');
+  } finally {
+    harness.restore();
+  }
+});
+
+test('the report says how many routes the discovery wrapper owns', async () => {
+  const harness = await run({ fixDiscovery: true });
+  try {
+    const result = await harness.state.command.handler({ rawInput: '' });
+    assert.match(result.text, /发现按钮：installed（接管 \d+ 条路由）/);
+  } finally {
+    harness.restore();
+  }
+});

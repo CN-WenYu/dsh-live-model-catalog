@@ -33,6 +33,19 @@ test('filling is still scoped to the capability fields', () => {
   assert.deepEqual(defaults.fill, ['contextWindow', 'maxTokens', 'input', 'reasoningEfforts']);
 });
 
+test('a route starts with no reasoning declaration and no listing override', () => {
+  const route = Config({ routes: { sensenova: {} } }).routes.sensenova;
+  assert.deepEqual(route.efforts, {}, 'nothing is assumed about a provider before the owner says so');
+  assert.equal(route.listingPath, '');
+  assert.equal(route.enabled, true);
+});
+
+test('a route declaration is kept exactly as written', () => {
+  const route = Config({ routes: { sensenova: { efforts: { low: 'low', off: null }, listingPath: '/llm/models' } } }).routes.sensenova;
+  assert.deepEqual(route.efforts, { low: 'low', off: null });
+  assert.equal(route.listingPath, '/llm/models');
+});
+
 test('the conservative fallbacks survive', () => {
   assert.equal(defaults.enabled, true);
   assert.equal(defaults.mode, 'auto');

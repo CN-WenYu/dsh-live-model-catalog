@@ -16,7 +16,9 @@ DSH 里有两个独立的缺口，症状不同、根因不同：
 
 **② 自定义路由没有思考强度。** `resolveModelReasoning` 对"没有内置目录孪生条目"的手写模型返回 `{ reasoning: false }`，于是 composer 的思考档位选择器不出现；官方「模型」页又刻意不提供 `reasoningEfforts` 编辑框。而且能力继承是**按 provider 路由键**查目录的——路由只要不叫 `openrouter`，即使 model id 与目录完全一致也继承不到任何能力。
 
-本插件的做法：读每条受管路由自己的 `GET {baseURL}/models`，把其中的模型 id 与能力字段写进 `llm-pi-ai`。
+能力还有第三种情况，插件也补不了：**端点自己在 `/models` 里不说推理元数据**。商汤日日新就是这种——它的模型清单只给 `id/type/owner/created_at`，既没有上下文长度，也没有任何 reasoning 字段，而且商汤**不在 pi-ai 内置目录里**（`sense/nova` 匹配 0 个 provider、0 个模型），所以"模型和官方一样"也继承不到。这时唯一的来源是**你自己声明**：见下文「[端点不说推理：`routes.<name>.efforts`](#端点不说推理routesnameefforts)」。
+
+本插件的做法：读每条受管路由自己的 `GET {baseURL}/models`，把其中的模型 id 与能力字段写进 `llm-pi-ai`；端点沉默的字段由你按路由声明，插件负责写进去，并保证端点的答案永远优先。
 
 ---
 
@@ -76,10 +78,11 @@ dsh web
 于是新装的人走这一条路就够了：
 
 1. 装好、重启；
-2. 打开 **设置 → 模型 → 你的路由 → 「获取可用模型」**（现在实时，列出端点上全部模型）；
+2. 打开 **设置 → 模型 → 你的路由 → 「获取可用模型」**（现在实时，列出端点上全部模型）。**内置提供方也一样**：哪怕你还没把它添加进 settings，这个按钮也已经走端点，而不是随包快照；
 3. **采纳一次** → 这条路由此有了 `models` 列表（DSH 的采纳只拷 `id/name/contextWindow/maxTokens`，缺的 `input`/`reasoningEfforts` 插件会在 1.5 秒内补齐）；
 4. 之后每轮同步都会自动补上**比快照新的新模型**；要收窄就把 `include` 改成 `['deepseek/*','qwen/*']` 这类白名单，要连别名一起收就把 `skipAliases` 设 `false`；
-5. 若这条路由的**目录跨了多种协议**（`openrouter`、`github-copilot` 是这种），再加一行 `routes.<name>.api`（报告会直接点名要什么）。
+5. 若这条路由的**目录跨了多种协议**（`openrouter`、`github-copilot` 是这种），加一行 `routes.<name>.api`（报告会直接点名要什么）；
+6. 若这个提供方**不在 pi-ai 目录里、且端点不报推理元数据**（商汤这类），加一行 `routes.<name>.efforts`，否则它的思考档位永远不会出现。
 
 ### 兼容性
 
@@ -101,8 +104,14 @@ dsh web
 live-model-catalog:
   mode: auto                 # auto = llm-pi-ai 下所有路由都管；listed = 只管理 routes 里点名的
   exclude: []                # 想放过的路由（auto 模式下生效），如 ['local', '*-experimental']
-  routes: {}                 # 逐路由覆盖，见下文「跨协议目录的路由」
-  # 例：{ openrouter: { api: 'openai-completions' } }   ← 让该路由能真的接纳目录外的新模型
+  routes: {}                 # 逐路由覆盖，见下文「跨协议目录的路由」与「端点不说推理」
+  # 例：
+  # routes:
+  #   openrouter:
+  #     api: openai-completions              # 让该路由能真的接纳目录外的新模型
+  #   sensenova:
+  #     efforts: { low: low, high: high }    # 端点不说推理时，由你声明档位
+  #     listingPath: https://api.sensenova.cn/v1/llm/models   # 模型清单不在 {baseURL}/models 时
   include: ['*']              # 允许被"新增"的 id 白名单；['*'] = 所有厂商；留空 = 只补齐不新增
   addSince: 'snapshot'        # 只新增 pi-ai 快照之后发布的模型；也可写日期/秒；留空 = 不设下限
   skipAliases: true           # 端点自称别名的 id 不写入配置（会在端点侧漂移）
@@ -112,7 +121,14 @@ live-model-catalog:
   intervalMinutes: 240                # 0 = 只在启动时跑一次
 ```
 
-**范围是发现出来的，不是写死的**：`mode: auto`（默认）会把 `llm-pi-ai.providers` 里的每个路由都纳入，包括 pi-ai 内置提供方——内置路由在 profile 里通常不写 `baseURL`，插件的端点解析顺序是
+**范围是发现出来的，不是写死的，而且是两个范围**：
+
+| 范围 | 包含 | 用在哪 |
+|---|---|---|
+| **写入范围**（模块 A） | `llm-pi-ai.providers` 里**已声明**的路由 + `routes` 里点名的 | 补齐能力、追加新模型——只会写你已经写过的路由 |
+| **发现范围**（模块 B） | 上面那些 **＋ pi-ai 内置目录里的全部 provider**（内置目录通常 32 条，实测如此） | 只回答「获取可用模型」按钮，从不写配置 |
+
+发现范围故意更宽，因为「获取可用模型」最有用的时刻恰恰是**你还没添加那个内置提供方**：DSH 会把 pi-ai 的每个 provider 都列在「模型」页上（哪怕你 settings 里一个都没写），而它的官方发现对这些 id 一律返回随包快照。内置 provider 在 profile 里通常不写 `baseURL`，插件的端点解析顺序是
 
 ```
 本插件的 routes.<name>.baseURL  →  llm-pi-ai 该路由的 baseURL  →  pi-ai 内置提供方表
@@ -127,10 +143,12 @@ live-model-catalog:
 | `mode` | `auto` = 自动纳管 `llm-pi-ai` 下所有路由；`listed` = 只管理 `routes` 点名的 | `auto` |
 | `exclude` | `auto` 模式下要放过的路由名 glob | `[]` |
 | `routes.<name>` | 逐路由覆盖 `enabled/baseURL/api/apiKeyEnv`；`api` 同时决定该路由能否接纳目录外的新模型，见下文 | 无 |
+| `routes.<name>.efforts` | 该路由的推理档位声明（`档位: wire 值`）；只在端点沉默时生效，端点的答案永远优先 | `{}` |
+| `routes.<name>.listingPath` | 模型清单不在 `{baseURL}/models` 时的覆盖；相对路径拼在 `baseURL` 后，绝对 URL 原样使用 | `''` |
 | `include` | 允许自动新增的 id glob；`*` 跨 `/` | `['*']`（所有厂商） |
 | `addSince` | 只新增该日期/时间戳之后发布的模型；`snapshot` = pi-ai 快照的生成时间 | `'snapshot'` |
 | `fill` | 允许补齐的字段 | 全部四个 |
-| `defaultEfforts` | 端点说"会推理"但没给档位表时使用的预设 | `{off: none, high: high, max: max}` |
+| `defaultEfforts` | 端点**报了 `reasoning` 对象但没给档位表**时的全局预设（逐路由的 `efforts` 是它之外的补充，覆盖"端点什么都没说"） | `{off: none, high: high, max: max}` |
 | `skipAliases` | 端点标为别名的 id 是否跳过（`alias_target`） | `true` |
 | `fixDiscovery` | 是否同时修「获取可用模型」按钮 | `true` |
 | `intervalMinutes` | 周期刷新；`0` 关闭 | `240` |
@@ -164,7 +182,64 @@ reasoningEfforts:
   high: high
 ```
 
-本插件把它从端点的 `reasoning.supported_efforts` 自动翻译过来（`none` → `off`）；`reasoning.mandatory: true` 的模型不会提供"关闭"。端点没给档位表时使用 `defaultEfforts` 预设，并在报告里标注。
+档位的来源有优先级，**高优先级永远覆盖低优先级**：
+
+| 顺序 | 来源 | 生效条件 |
+|---|---|---|
+| 1 | 模型条目里已有的 `reasoningEfforts` | 你已经写了——插件**只补不改**，绝不覆盖 |
+| 2 | 端点 `/models` 里的 `reasoning.supported_efforts` | 端点报了档位表（`none` → `off`）；`reasoning.mandatory: true` 时不提供"关闭" |
+| 3 | `defaultEfforts` 全局预设 | 端点报了 `reasoning` 对象但没给档位表 |
+| 4 | `routes.<name>.efforts` 路由声明 | 端点什么都没说（或压根没列出这个模型） |
+
+报告里每个补齐都会带出它自己的说明行（`! …`），所以"档位从哪来的"不用猜。
+
+### 端点不说推理：`routes.<name>.efforts`
+
+商汤日日新这类端点，模型清单里既没有上下文长度也没有 reasoning 字段；而 DSH 的能力继承又只看 provider 路由键，商汤不在 pi-ai 目录里，继承不到任何东西。**唯一可行的办法是声明**：
+
+```yaml
+llm-pi-ai:
+  providers:
+    sensenova:
+      api: openai-completions
+      baseURL: https://api.sensenova.cn/compatible-mode/v2
+      apiKeyEnv: SENSENOVA_API_KEY
+      models:
+        - id: sensenova-6.7-flash-lite
+          contextWindow: 262144
+          maxTokens: 65536
+
+live-model-catalog:
+  routes:
+    sensenova:
+      efforts: { low: low, medium: medium, high: high }
+```
+
+`llm-pi-ai` 里的 `models` 保持干净（只写 id 和端点不给的容量），档位声明放在插件自己的 `routes` 下——这样"哪些是端点说的、哪些是你声明的"一眼可分，而且插件会在报告里写明它按声明补了哪几条。
+
+几个要点：
+
+- **只在端点沉默时生效**。端点哪天开始报 `supported_efforts`，端点的答案立刻接管，声明自动退居二线；不需要你删配置。
+- **`reasoningEfforts` 写 `false` 就是不补**。路由级别的声明会套到该路由每个缺 `reasoningEfforts` 的模型条目上，若某个模型其实不推理（或你不想要档位），在那条模型上写 `reasoningEfforts: false` 即可——DSH 把它读作"非推理模型"，插件也会跳过它。
+- **`off` 要么不写，要么写 `off: null`**。不写 = 不提供"关闭"；`off: null` = 选关闭时干脆不发这个参数。别写 `off: none`——商汤文档里没有 `"none"` 这个值。
+- **值就是发给端点的 wire 值**。商汤兼容模式文档里的正式参数是 `reasoning_effort: "medium"`，而 pi-ai 对非特殊 host 默认 `supportsReasoningEffort: true` + `thinkingFormat: 'openai'`，所以上面这份声明会真的发出 `reasoning_effort: "low|medium|high"`。
+- **走字符串 `thinking` 的模型要另配 compat**。若某模型在商汤网关上的开关是 `thinking` / `enable_thinking`（而不是 `reasoning_effort`），在那条模型条目上加 `compat: { thinkingFormat: string-thinking }`，并让档位值等于该字段要的字符串（`compat.thinkingFormat` 与 `compat.supportsReasoningEffort` 都是 DSH 允许配置的字段）。
+- **只补"已声明"的模型**。本轮才新发现的 id 不会套用声明（新发现的模型可能不推理，批量标记是错的）；它写进配置后，下一轮就是"已声明条目"，自愈那一轮会把档位补上。
+
+### 模型清单不在 `/models` 上：`routes.<name>.listingPath`
+
+插件（和 DSH 自己）对 `openai-completions` 拼的清单地址是 `{baseURL}/models`。有些服务不是这样——商汤兼容模式的对话端点是 `/compatible-mode/v2`，模型清单却在 `/v1/llm/models`（[官方文档](https://www.sensecore.cn/help/docs/model-as-a-service/nova/overview/Models/GetModelList)），根都不一样：
+
+```yaml
+live-model-catalog:
+  routes:
+    sensenova:
+      listingPath: https://api.sensenova.cn/v1/llm/models   # 绝对 URL：原样使用
+    internal-gw:
+      listingPath: /catalog/v2/models                       # 相对路径：拼在 baseURL 后面
+```
+
+清单读不到时路由会报 `失败（… answered 404）`，其余路由不受影响。
 
 ---
 
@@ -177,7 +252,8 @@ reasoningEfforts:
 - **新增先过协议关**：路由给不了目录外模型协议时，不写也不猜，报告点名并给处置；万一写入仍被 DSH 整体拒绝，自动退回"只写补齐"，不牵连已能落地的部分；
 - 无变化就不写，`settings.yaml` 不会每次启动都被改写；
 - 写入带 `expectedRevision`，与 GUI 编辑撞车时重读重算，不会覆盖你没见过的改动；
-- **自愈**：DSH 自己的「采纳」只拷 `id/name/contextWindow/maxTokens`，会把 `input` 和 `reasoningEfforts` 丢掉；插件监听 `llm-pi-ai` 的变化，1.5 秒后自动补回来。
+- **自愈**：DSH 自己的「采纳」只拷 `id/name/contextWindow/maxTokens`，会把 `input` 和 `reasoningEfforts` 丢掉；插件监听 `llm-pi-ai` 的变化，1.5 秒后自动补回来；
+- **端点沉默的字段由你声明**：`routes.<name>.efforts` / `.listingPath` 是"端点没说的部分由你说"，永远不覆盖端点的答案。
 
 **模块 B（`fixDiscovery`，默认开启）**
 
@@ -187,7 +263,9 @@ reasoningEfforts:
 
 - **默认开，因为它决定"装了是否就有反应"**；代价是碰了一个内部字段，所以三条性质必须同时成立：**启动探测契约**（形状变了只告警、不安装）、**失败只降级**（实时抓取失败回退官方答案）、**运行期可关**。
 - **开关在运行期也生效**：把 `fixDiscovery` 改成 `false` 会立刻把官方发现放回去（还原的是当初被包装的那一个），不需要重启；重启后也不会残留。
-- **范围是每轮现算的**：包装器每次被调用才去问"这条路由现在归我管吗"，所以你后加的路由**不需要重装包装器**就会被实时列表覆盖。
+- **范围是每轮现算的，而且比你配置过的更宽**：包装器每次被调用才去问"这条路由现在归我管吗"。范围 = 你声明的路由 **＋ pi-ai 内置目录里的全部 provider**，所以那些**你还没添加**的内置提供方（pi-ai 会照样把它们列在「模型」页上，官方发现对这些 id 一律回快照）点按钮也是实时的。这个更宽的范围**只用于回答按钮，从不写配置**——未声明的内置 provider 没有 `models` 列表，插件不会凭空替你创建一条路由。
+- **协议不可列举就交回官方**：像 `google-generative-ai` 这类 DSH 自己就没有清单读取方式的协议，插件不去猜 URL，直接放行让官方给出它那句"请手工录入模型"。
+- **报告会说它接管了几条**：`发现按钮：installed（接管 32 条路由）`。这个数字是诊断按钮是否生效的第一现场——`0` 说明插件一条路由都没管住；比「模型」页上的 provider 数少，通常是 pi-ai 定位失败（同一份报告里的 `内置端点：` 那行会说明原因）。
 - 官方哪天自己支持了实时发现，把这个开关关掉即可。
 
 ---
@@ -209,7 +287,12 @@ reasoningEfforts:
 [live-model-catalog]     线上 443 个模型；新增 7；补齐 0；未列出 0；白名单外 0；早于 addSince 415；跳过别名 16
 [live-model-catalog]     + sakana/fugu-max
 [live-model-catalog]     ~ deepseek/deepseek-v4.1-flash → input, reasoningEfforts
+[live-model-catalog]     ~ sensenova-6.7-flash-lite → reasoningEfforts
+[live-model-catalog]       ! 端点未提供推理档位表；已按本插件的路由档位声明补齐
+[live-model-catalog] 发现按钮：installed（接管 32 条路由） — live discovery installed over the installed catalog
 ```
+
+`接管 32 条路由` 是"发现范围"的大小：你声明的路由数 + pi-ai 内置 provider 数。端点解析失败时它会小得多，同一份报告里的「内置端点」行会说明原因。
 
 ## 刷新节奏与失败重试
 
@@ -235,8 +318,11 @@ reasoningEfforts:
 | 提示"不是 JSON 兼容值" | `settings.yaml` 里那个字段被 YAML 解析成了非 JSON 值（最常见是**未加引号的日期** → `Date`）；加引号写成字符串（如 `'2026-09-05'`）即可，插件会在写入前就拦下并点名到条目与字段 |
 | 提示 `需声明协议：…` | 该路由的目录跨多种协议且自己没声明 `api`；按提示在 `live-model-catalog.routes.<name>.api` 里声明后重跑 |
 | 报告里出现 `新增被拒` | 写入被 DSH 整体校验拒绝（原因此行会写）；补齐已落盘，按原因处理后重跑 |
-| 思考档位还是不出现 | 该模型的 `reasoningEfforts` 是否被写上（看报告里的 `~` 行） |
-| 按钮仍返回旧列表 | `fixDiscovery` 是否为 `true`；报告里的「发现按钮」行说了什么 |
+| 思考档位还是不出现 | 该模型的 `reasoningEfforts` 是否被写上（看报告里的 `~` 行）。没有 `~` 行说明端点没提推理、也没有路由声明 → 加 `routes.<name>.efforts` |
+| `routes.<name>.efforts` 写了却没进选择器 | 该条目是不是已经有 `reasoningEfforts`（**已有的一律不动**，包括 `false`）；`fill` 里是否还留着 `reasoningEfforts`；那个模型是不是本轮才新发现的（下一轮才补） |
+| 按钮仍返回旧列表 | `fixDiscovery` 是否为 `true`；报告里的「发现按钮」行说了什么、**接管几条路由**；若那个内置提供方还没添加，接管数应等于内置 provider 总数（约 32） |
+| 按钮报 404 / 返回的模型明显不对 | 该服务的模型清单不在 `{baseURL}/models`；用 `routes.<name>.listingPath` 指到正确位置（可以是绝对 URL） |
+| 报告的 `~` 行下没有说明行 | 那是 0.1.0 的行为（补齐的翻译注释被丢掉了）；0.2.0 起每个补齐都会带出 `! …` 说明 |
 | 内置端点解析失败 | 报告首行会写；此时内置路由需要手写 `baseURL`。（已知坑：若 `argv[1]` 是 PATH 上的符号链接而锚点没 `realpath`，会把"能定位"误判成"定位失败"，现象就是内置路由全部 `失败（no baseURL）`；已修并有专门用符号链接跑的回归测试） |
 
 ---
@@ -246,7 +332,7 @@ reasoningEfforts:
 这个插件的设计目标就是"坏了你能自己修"：
 
 ```sh
-npm test           # 132 个离线用例，不联网，秒级
+npm test           # 163 个离线用例，不联网，秒级
 npm run check      # 语法检查
 ```
 
@@ -267,7 +353,7 @@ lib/translate.js   端点条目 → DSH 模型字段        ← 元数据形状�
 lib/merge.js       只增只改策略 + addSince 闸门 + 协议闸门   ← 策略变了改这里
 lib/typing.js      路由协议判定（跨协议目录时的新增闸门与安全核对）
 lib/plan.js        轮次规划的两遍决策（纯函数，不碰 ctx/网络/时钟）
-lib/routes.js      路由事实解析（端点/key/协议/目录协议）
+lib/routes.js      路由事实解析（端点/协议/目录协议/声明）+ 两个范围（写入 / 发现）
 lib/apply.js       唯一写入路径（settings.mutate + 冲突重试）
 lib/discovery.js   模块 B：契约探测 + 包装
 lib/report.js      报告渲染
@@ -279,7 +365,9 @@ lib/index.js       生命周期：启动/定时/命令/自愈
 ## 边界
 
 - 只支持 `openai-completions` / `openai-responses` / `anthropic-messages` 三种可列举的协议（与官方 discovery 一致）；其余协议**先判定再跳过**，不去探测。
-- 不会写 `compat`：pi-ai 会按 baseURL 自动识别 openrouter（`detectCompat` 匹配 `openrouter.ai`），无需声明。
+- 不会写 `compat`：pi-ai 会按 baseURL 自动识别 openrouter（`detectCompat` 匹配 `openrouter.ai`），无需声明；确实需要的（例如走字符串 `thinking` 字段的模型）由你在**模型条目**上写 `compat`，插件不碰。
+- **`routes.<name>.efforts` 只补"已声明"的条目**，不给本轮新发现的 id 套用（新发现的一批里可能混着不推理的模型，批量标记是错的）；它们写进配置后的下一轮会被补上。
+- **只读一份配置，不猜端点**：推理档位要么来自端点，要么来自你的声明。插件不会因为模型名字像某个官方模型就替它假定能力——DSH 的能力继承本来就是按 provider 路由键查的，插件不越过这条线。
 - 不处理路由级 `reasoning`（默认档位）——那是一个可选项，需要时手动写 `llm-pi-ai.providers.<route>.reasoning: high`。
 - 只读**用户层**的 `models`：从组合 base 继承来的模型列表不会被改写。
 - **`input` 按端点覆盖目录**：模态的优先级是「端点名单 → 目录孪生条目 → 路由 `defaultInput`」，而 DSH 缺省的 `defaultInput` 只有 `["text"]`——所以补齐通常是**加**能力（文本模型在目录里只有 text、线上报 text+image），但也会覆盖目录里给的更宽集合。DSH 的模态词表只有 `text`/`image`，线上报的 `video` 不会被携带。想让目录/默认值说了算，就把 `input` 从 `fill` 里去掉；要在某一条上强制，直接写 `input`（你写过的字段永不覆盖）。

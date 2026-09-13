@@ -16,7 +16,9 @@ Two independent gaps in DSH, with different symptoms and different root causes:
 
 **② A hand-written route has no thinking levels.** `resolveModelReasoning` returns `{ reasoning: false }` for a model with no catalog twin, so the composer offers no effort selector — and the official Models page deliberately has no `reasoningEfforts` field. Capability inheritance is also looked up **by provider route key**: a route not named `openrouter` inherits nothing, even for a model id the catalog describes exactly.
 
-What this plugin does: read each managed route's own `GET {baseURL}/models`, and write those model ids and capability fields into `llm-pi-ai`.
+There is a third case the plugin cannot derive either: **the endpoint itself publishes no reasoning metadata in `/models`**. SenseNova is one — its model list gives `id/type/owner/created_at`, no context length and no reasoning field at all — and SenseNova **is not in pi-ai's catalog** (a `sense/nova` search matches zero providers and zero models), so "the models are the same as the official ones" inherits nothing. The only source left is **your own declaration**: see [`routes.<name>.efforts`](#when-the-endpoint-wont-say-routesnameefforts) below.
+
+What this plugin does: read each managed route's own `GET {baseURL}/models` and write those model ids and capability fields into `llm-pi-ai`; a field the endpoint is silent about is declared per route, the plugin writes it, and the endpoint's own answer always wins.
 
 ---
 
@@ -76,10 +78,11 @@ dsh web
 So a fresh install needs only this path:
 
 1. Install, restart.
-2. Open **Settings → Models → your route → "Fetch available models"** (now live: it lists everything the endpoint advertises).
+2. Open **Settings → Models → your route → "Fetch available models"** (now live: it lists everything the endpoint advertises). **Built-in providers behave the same way**: even before you have added one to your settings, the button asks the endpoint rather than the shipped snapshot.
 3. **Adopt once** → the route now has a `models` list. (DSH's adopt copies only `id/name/contextWindow/maxTokens`; the plugin fills in the missing `input` / `reasoningEfforts` within 1.5 s.)
 4. Every later round adds **whatever is newer than the snapshot**. To narrow it, set `include` to a vendor allowlist such as `['deepseek/*','qwen/*']`; to take the aliases too, set `skipAliases: false`.
 5. If the route's **catalog spans more than one protocol** (`openrouter` and `github-copilot` do), add one `routes.<name>.api` line — the report names exactly what it needs.
+6. If the provider is **not in pi-ai's catalog and its endpoint publishes no reasoning metadata** (SenseNova is one), add one `routes.<name>.efforts` line — otherwise its thinking levels never appear.
 
 ### Compatibility
 
@@ -101,8 +104,14 @@ Written to `~/.dsh/settings.yaml` (the plugin registers its own `live-model-cata
 live-model-catalog:
   mode: auto                 # auto = every route under llm-pi-ai; listed = only the names under routes
   exclude: []                # route names to leave alone in auto mode, e.g. ['local', '*-experimental']
-  routes: {}                 # per-route overrides, see "Routes whose catalog spans protocols"
-  # e.g. { openrouter: { api: 'openai-completions' } }   ← lets that route accept a model its catalog cannot type
+  routes: {}                 # per-route overrides, see "Routes whose catalog spans protocols" and "When the endpoint won't say"
+  # e.g.
+  # routes:
+  #   openrouter:
+  #     api: openai-completions              # lets that route accept a model its catalog cannot type
+  #   sensenova:
+  #     efforts: { low: low, high: high }    # thinking levels the endpoint never publishes
+  #     listingPath: https://api.sensenova.cn/v1/llm/models   # when the listing is not at {baseURL}/models
   include: ['*']              # id allowlist for ADDITIONS; ['*'] = every vendor; empty = fill only
   addSince: 'snapshot'        # only add models published after this; a date/unix seconds also work; empty = no bound
   skipAliases: true           # ids the endpoint marks as aliases are not written (they drift)
@@ -112,7 +121,14 @@ live-model-catalog:
   intervalMinutes: 240                # 0 = run once at startup only
 ```
 
-**Scope is discovered, not hard-coded**: `mode: auto` (the default) includes every route under `llm-pi-ai.providers`, built-in providers included. A built-in route normally declares no `baseURL`, so the endpoint resolution order is
+**Scope is discovered, not hard-coded — and there are two of them**:
+
+| Scope | Contains | Used for |
+|---|---|---|
+| **Write scope** (module A) | routes **declared** under `llm-pi-ai.providers`, plus any named under `routes` | filling capabilities and adding models — only ever writes to routes you already wrote |
+| **Discovery scope** (module B) | the above **＋ every provider pi-ai ships** (32 on the machine this was measured on) | answering the "fetch available models" button, and nothing else |
+
+The discovery scope is deliberately wider, because the button is most useful **before** you have added a built-in provider at all: DSH lists every pi-ai provider on the Models page whether or not your settings mention it, and its own discovery answers those ids from the shipped snapshot. A built-in route normally declares no `baseURL`, so the endpoint resolution order is
 
 ```
 this plugin's routes.<name>.baseURL  →  the route's baseURL in llm-pi-ai  →  pi-ai's built-in provider table
@@ -127,10 +143,12 @@ The third layer comes from a guarded lookup chain (a bare import first; otherwis
 | `mode` | `auto` = every route under `llm-pi-ai`; `listed` = only the names under `routes` | `auto` |
 | `exclude` | Route-name globs to leave alone in `auto` mode | `[]` |
 | `routes.<name>` | Per-route overrides of `enabled/baseURL/api/apiKeyEnv`; `api` also decides whether the route can accept an out-of-catalog model | none |
+| `routes.<name>.efforts` | This route's thinking-level declaration (`level: wire value`); applies only where the endpoint is silent, and the endpoint's own answer always outranks it | `{}` |
+| `routes.<name>.listingPath` | Where this route lists its models when that is not `{baseURL}/models`; a path is appended to `baseURL`, an absolute URL is used verbatim | `''` |
 | `include` | Id globs allowed to be added; `*` spans `/` | `['*']` (every vendor) |
 | `addSince` | Only add models published after this date/timestamp; `snapshot` = pi-ai's own generation time | `'snapshot'` |
 | `fill` | Which fields may be filled | all four |
-| `defaultEfforts` | Preset used when an endpoint reasons but publishes no effort list | `{off: none, high: high, max: max}` |
+| `defaultEfforts` | Global preset used when an endpoint **reports a `reasoning` object but no effort list** (a route's own `efforts` covers the endpoint saying nothing at all) | `{off: none, high: high, max: max}` |
 | `skipAliases` | Skip ids the endpoint marks as aliases (`alias_target`) | `true` |
 | `fixDiscovery` | Whether to repair the "Fetch available models" button too | `true` |
 | `intervalMinutes` | Refresh period; `0` disables it | `240` |
@@ -164,7 +182,62 @@ reasoningEfforts:
   high: high
 ```
 
-The plugin translates these from the endpoint's `reasoning.supported_efforts` (`none` → `off`); a model with `reasoning.mandatory: true` is never offered "off". When an endpoint reasons but publishes no level list, the `defaultEfforts` preset is used and the report says so.
+Levels have a precedence, and **a higher source always wins**:
+
+| # | Source | Applies when |
+|---|---|---|
+| 1 | `reasoningEfforts` already on the model entry | you wrote it — the plugin is **fill-only** and never overwrites |
+| 2 | the endpoint's `reasoning.supported_efforts` | the endpoint publishes a level list (`none` → `off`); `reasoning.mandatory: true` drops "off" |
+| 3 | the `defaultEfforts` global preset | the endpoint reports a `reasoning` object but no level list |
+| 4 | a `routes.<name>.efforts` declaration | the endpoint says nothing at all, or does not even list the model |
+
+Every fill carries its own explanation line (`! …`) in the report, so where a level came from is never a guess.
+
+### When the endpoint won't say: `routes.<name>.efforts`
+
+Some endpoints publish neither context length nor any reasoning metadata in their model list — SenseNova is one — and because DSH inherits capability by provider route key, a provider pi-ai does not ship inherits nothing even when its model ids match the official catalog. **Declaring it is the only way**:
+
+```yaml
+llm-pi-ai:
+  providers:
+    sensenova:
+      api: openai-completions
+      baseURL: https://api.sensenova.cn/compatible-mode/v2
+      apiKeyEnv: SENSENOVA_API_KEY
+      models:
+        - id: sensenova-6.7-flash-lite
+          contextWindow: 262144
+          maxTokens: 65536
+
+live-model-catalog:
+  routes:
+    sensenova:
+      efforts: { low: low, medium: medium, high: high }
+```
+
+The `models` list under `llm-pi-ai` stays clean (ids plus the capacities the endpoint does not give), and the level declaration lives under the plugin's own `routes` — so "what the endpoint said" and "what you declared" stay visibly separate, and the report states which entries it filled from the declaration.
+
+- **It applies only where the endpoint is silent.** The day the endpoint starts publishing `supported_efforts`, its answer takes over and your declaration drops to second place; nothing to delete.
+- **`reasoningEfforts: false` on a model means "don't fill this one".** A route-level declaration reaches every entry missing the field; a model that does not actually reason (or one you want left alone) opts out with `false`, which DSH reads as "non-reasoning model".
+- **`off` is either absent or `off: null`.** Absent = "off" is not offered; `off: null` = choosing "off" sends nothing at all. Do not write `off: none` — SenseNova documents no such value.
+- **The value is the wire spelling.** SenseNova's OpenAI-compatible mode documents `reasoning_effort: "medium"`, and pi-ai defaults to `supportsReasoningEffort: true` + `thinkingFormat: 'openai'` for a host it does not special-case, so the declaration above really does send `reasoning_effort: "low|medium|high"`.
+- **A model switched by a string `thinking` field needs `compat` too.** If the gateway toggles it with `thinking` / `enable_thinking` instead, add `compat: { thinkingFormat: string-thinking }` to that model entry and make the level value the string that field expects (DSH allows configuring both `compat.thinkingFormat` and `compat.supportsReasoningEffort`).
+- **Only already-declared models are filled.** An id discovered this round is not handed the declaration (a freshly discovered batch may mix reasoning and non-reasoning models); once it is written, the next round sees it as a declared entry and the self-healing pass fills it.
+
+### When the listing is not at `/models`: `routes.<name>.listingPath`
+
+For `openai-completions`, the plugin (and DSH itself) builds the listing URL as `{baseURL}/models`. Some services disagree — SenseNova's OpenAI-compatible chat base is `/compatible-mode/v2` while its model list lives at `/v1/llm/models` ([docs](https://www.sensecore.cn/help/docs/model-as-a-service/nova/overview/Models/GetModelList)), a different root entirely:
+
+```yaml
+live-model-catalog:
+  routes:
+    sensenova:
+      listingPath: https://api.sensenova.cn/v1/llm/models   # absolute URL: used verbatim
+    internal-gw:
+      listingPath: /catalog/v2/models                       # path: appended to baseURL
+```
+
+A route whose listing cannot be read reports `failed (… answered 404)`; other routes are unaffected.
 
 ---
 
@@ -178,6 +251,7 @@ The plugin translates these from the endpoint's `reasoning.supported_efforts` (`
 - No change means no write: `settings.yaml` is not rewritten on every start.
 - Writes carry `expectedRevision`, so a race with a GUI edit re-reads and re-plans instead of overwriting a change it never saw.
 - **Self-healing**: DSH's own "adopt" copies only `id/name/contextWindow/maxTokens`, dropping `input` and `reasoningEfforts`; the plugin watches `llm-pi-ai` and fills them back in 1.5 s later.
+- **A field the endpoint is silent about can be declared**: `routes.<name>.efforts` / `.listingPath`. A declaration says "you say the part the endpoint did not" and never overrides the endpoint's answer.
 
 **Module B (`fixDiscovery`, on by default)**
 
@@ -187,7 +261,9 @@ That is an **internal field**, so module B is written to fail loudly rather than
 
 - **It defaults on because it decides whether an install reacts at all**; the price is touching an internal field, so all three properties must hold: the contract is **probed at startup** (a shape change warns and does not install), **any failure only degrades** (a failed live fetch falls back to the official answer), and it is **switchable at runtime**.
 - **The switch works at runtime**: setting `fixDiscovery` to `false` puts the official discovery back immediately (the very one that was wrapped); nothing survives a restart either.
-- **Its scope is recomputed per call**: the wrapper asks "is this route mine now?" on every invocation, so a route you add later is covered by the live list **without reinstalling the wrapper**.
+- **Its scope is recomputed per call, and is wider than what you configured**: the wrapper asks "is this route mine now?" on every invocation. The scope is the routes you declared **＋ every provider pi-ai ships**, so a built-in provider **you have not added yet** — DSH lists all of them on the Models page, and the official discovery answers those ids from the snapshot — is answered live too. That wider scope **only answers the button and never writes settings**: an undeclared built-in provider has no `models` list, so no route is ever created behind your back.
+- **An unlistable protocol goes back to the official answer**: for protocols DSH itself cannot read a listing for (`google-generative-ai`, say), the plugin does not invent a URL — it falls through so the platform's own "enter this provider's models by hand" message is what you see.
+- **The report names how many routes it owns**: `发现按钮：installed（接管 32 条路由）`. That count is the first thing to look at when the button misbehaves — `0` means the plugin owns no route at all, and a count below the number of providers on the Models page usually means pi-ai could not be located (the `内置端点：` line of the same report says why).
 - If the official implementation ever gains live discovery, turn the switch off.
 
 ---
@@ -209,7 +285,12 @@ One line per route in the startup log. **The report itself is rendered in Chines
 [live-model-catalog]     线上 443 个模型；新增 7；补齐 0；未列出 0；白名单外 0；早于 addSince 415；跳过别名 16
 [live-model-catalog]     + sakana/fugu-max
 [live-model-catalog]     ~ deepseek/deepseek-v4.1-flash → input, reasoningEfforts
+[live-model-catalog]     ~ sensenova-6.7-flash-lite → reasoningEfforts
+[live-model-catalog]       ! 端点未提供推理档位表；已按本插件的路由档位声明补齐
+[live-model-catalog] 发现按钮：installed（接管 32 条路由） — live discovery installed over the installed catalog
 ```
+
+`接管 32 条路由` is the size of the discovery scope: the routes you declared plus the providers pi-ai ships. It drops well below that when the endpoint lookup fails, and the `内置端点` line of the same report says why.
 
 | Chinese | Meaning |
 |---|---|
@@ -220,7 +301,8 @@ One line per route in the startup log. **The report itself is rendered in Chines
 | `线上` / `新增` / `补齐` | models on the endpoint / added / filled |
 | `未列出` / `白名单外` / `早于 addSince` | delisted / outside the allowlist / older than `addSince` |
 | `跳过别名` / `需声明协议` | aliases skipped / models that need a declared protocol |
-| `发现按钮` | the fetch button (`installed` / `pending` / `unsupported` / `absent` / `removed`) |
+| `发现按钮` | the fetch button (`installed` / `pending` / `unsupported` / `absent` / `removed`), followed by `（接管 N 条路由）` = how many routes that wrapper owns |
+| `端点未提供推理档位表；已按本插件的路由档位声明补齐` | the endpoint published no effort table; filled from this plugin's `routes.<name>.efforts` declaration |
 | `配置里的 … 是 …，不是 JSON 兼容值`, `无法列举模型`, `端点已不再列出` | see the symptom table below |
 
 A fully English report would need the labels in `lib/report.js` to be localised; today they are not.
@@ -249,8 +331,11 @@ A fully English report would need the labels in `lib/report.js` to be localised;
 | `不是 JSON 兼容值` (is not a JSON-compatible value) | That field in `settings.yaml` parsed into something YAML allows and JSON does not (most often an **unquoted date** → `Date`); quote it as a string (e.g. `'2026-09-05'`). The plugin catches it before writing and names the entry and field |
 | `需声明协议：…` (needs a protocol) | The route's catalog spans protocols and it declares no `api`; declare it under `live-model-catalog.routes.<name>.api` and run again |
 | `新增被拒` (additions refused) | DSH refused the write as a whole (the reason is on that line); the fills did land, so fix the reason and run again |
-| Still no thinking levels | Was `reasoningEfforts` written for that model (see the `~` lines) |
-| The button still returns the old list | Is `fixDiscovery` `true`; what does the report's "fetch button" line say |
+| Still no thinking levels | Was `reasoningEfforts` written for that model (see the `~` lines). No `~` line means the endpoint said nothing and no route declaration exists → add `routes.<name>.efforts` |
+| `routes.<name>.efforts` is declared but the selector is still empty | Does that entry already carry `reasoningEfforts` (**anything existing is never touched**, `false` included); is `reasoningEfforts` still in `fill`; was that model only discovered this round (it is filled next round) |
+| The button still returns the old list | Is `fixDiscovery` `true`; what does the report's "fetch button" line say, and **how many routes does it own**; for a built-in provider you have not added, that count should equal the number of providers pi-ai ships (about 32) |
+| The button 404s, or returns obviously wrong models | That service's model list is not at `{baseURL}/models`; point `routes.<name>.listingPath` at the right place (an absolute URL is allowed) |
+| A `~` fill line has no explanation under it | That was 0.1.0 behaviour (the translation notes were dropped); from 0.2.0 every fill carries its `! …` note |
 | Built-in endpoint resolution failed | The report's first lines say so, and built-in routes then need a written `baseURL`. (Known trap: when `argv[1]` is a symlink on `PATH` and the anchor is not `realpath`-resolved, "found" is misreported as "not found", and every built-in route fails with `no baseURL`; fixed, with a regression test that runs through a symlink) |
 
 ---
@@ -260,7 +345,7 @@ A fully English report would need the labels in `lib/report.js` to be localised;
 This plugin's design goal is that you can fix it yourself:
 
 ```sh
-npm test           # 132 offline cases, no network, seconds
+npm test           # 163 offline cases, no network, seconds
 npm run check      # syntax check
 ```
 
@@ -293,7 +378,9 @@ lib/index.js       lifecycle: startup / interval / command / self-heal
 ## Boundaries
 
 - Only the three listable protocols are supported — `openai-completions` / `openai-responses` / `anthropic-messages` (the same boundary as official discovery); any other protocol is **recognised and skipped**, never probed.
-- It does not write `compat`: pi-ai detects openrouter from the baseURL (`detectCompat` matches `openrouter.ai`), so there is nothing to declare.
+- It does not write `compat`: pi-ai detects openrouter from the baseURL (`detectCompat` matches `openrouter.ai`), so there is nothing to declare; when one really is needed (a model toggled by a string `thinking` field, say), you write `compat` on the **model entry** and the plugin leaves it alone.
+- **`routes.<name>.efforts` only fills models you already declared**, never ids discovered in the same round (a freshly discovered batch may mix reasoning and non-reasoning models, so marking them all would be wrong); they are filled on the next round, once written.
+- **It reads one configuration and guesses no endpoint**: a thinking level comes either from the endpoint or from your declaration. It never assumes capability because a model's id resembles an official one — DSH's capability inheritance is keyed by provider route, and the plugin does not step over that line.
 - It does not manage the route-level `reasoning` default — that is optional; write `llm-pi-ai.providers.<route>.reasoning: high` yourself when you want it.
 - It reads only the **user layer**'s `models`: a list inherited from a composition base is never rewritten.
 - **`input` follows the endpoint over the catalog**: modality precedence is "endpoint list → catalog twin → the route's `defaultInput`", and DSH's default `defaultInput` is only `["text"]` — so a fill usually **adds** capability (a model the catalog calls text-only, while the endpoint reports text+image), though it also overrides a wider set from the catalog. DSH's modality vocabulary is only `text`/`image`, so a `video` the endpoint reports is not carried. To let the catalog/defaults win, drop `input` from `fill`; to force one entry, write its `input` (a field you wrote is never overwritten).

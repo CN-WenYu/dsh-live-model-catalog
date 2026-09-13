@@ -182,3 +182,68 @@ test('an explicit bound and an empty bound are passed through untouched', () => 
   assert.deepEqual(resolveAddSince('2026-09-05', undefined), { since: '2026-09-05', withhold: false, note: undefined });
   assert.deepEqual(resolveAddSince('', undefined), { since: '', withhold: false, note: undefined });
 });
+
+test('a route declaration fills the reasoning capability an endpoint never publishes', () => {
+  const plan = planRoute({
+    current: [{ id: 'qwen/qwen3.9-flash' }],
+    live,
+    include: [],
+    fill: ['contextWindow', 'maxTokens', 'input', 'reasoningEfforts'],
+    routeEfforts: { low: 'low', high: 'high' },
+  });
+  assert.deepEqual(plan.next[0].reasoningEfforts, { low: 'low', high: 'high' });
+  assert.deepEqual(plan.filled, [
+    {
+      id: 'qwen/qwen3.9-flash',
+      fields: ['contextWindow', 'input', 'reasoningEfforts'],
+      notes: ['端点未提供推理档位表；已按本插件的路由档位声明补齐'],
+    },
+  ]);
+});
+
+test('the endpoint’s own effort table outranks the route declaration', () => {
+  const plan = planRoute({
+    current: [{ id: 'deepseek/deepseek-v4.1-flash' }],
+    live,
+    include: [],
+    fill: ['reasoningEfforts'],
+    routeEfforts: { low: 'low', medium: 'medium' },
+  });
+  assert.deepEqual(plan.next[0].reasoningEfforts, { high: 'high' });
+});
+
+test('a declared effort fills a model the endpoint does not list at all', () => {
+  const plan = planRoute({ current: [{ id: 'gone/model' }], live, include: [], fill: ['reasoningEfforts'], routeEfforts: { high: 'high' } });
+  assert.deepEqual(plan.notAdvertised, ['gone/model']);
+  assert.deepEqual(plan.next[0].reasoningEfforts, { high: 'high' });
+  assert.equal(plan.changed, true, 'the declaration alone is still a change worth writing');
+});
+
+test('and brings nothing else with it, because nothing else is known about that model', () => {
+  const plan = planRoute({
+    current: [{ id: 'gone/model' }],
+    live,
+    include: [],
+    fill: ['contextWindow', 'maxTokens', 'input', 'reasoningEfforts'],
+    routeEfforts: { high: 'high' },
+  });
+  assert.deepEqual(plan.filled, [
+    { id: 'gone/model', fields: ['reasoningEfforts'], notes: ['端点未提供推理档位表；已按本插件的路由档位声明补齐'] },
+  ]);
+});
+
+test('a model that opted out with reasoningEfforts: false keeps the opt-out', () => {
+  const plan = planRoute({ current: [{ id: 'qwen/qwen3.9-flash', reasoningEfforts: false }], live, include: [], routeEfforts: { high: 'high' } });
+  assert.equal(plan.next[0].reasoningEfforts, false);
+});
+
+test('declaring efforts does nothing when reasoningEfforts is not a fillable field', () => {
+  const plan = planRoute({ current: [{ id: 'qwen/qwen3.9-flash' }], live, include: [], fill: ['contextWindow'], routeEfforts: { high: 'high' } });
+  assert.equal('reasoningEfforts' in plan.next[0], false);
+});
+
+test('an unusable declared dict is dropped rather than written half-valid', () => {
+  const plan = planRoute({ current: [{ id: 'qwen/qwen3.9-flash' }], live, include: [], fill: ['reasoningEfforts'], routeEfforts: { high: null } });
+  assert.equal('reasoningEfforts' in plan.next[0], false);
+  assert.equal(plan.changed, false);
+});

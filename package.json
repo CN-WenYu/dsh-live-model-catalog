@@ -1,7 +1,7 @@
 {
   "name": "dsh-live-model-catalog",
-  "version": "0.1.0",
-  "description": "DSH plugin: keeps every llm-pi-ai route (custom providers included) in step with its endpoint's own /models — adds new models, fills contextWindow / maxTokens / input / reasoningEfforts, writes thinking levels when the endpoint reports reasoning, and makes the \"fetch available models\" button live. Official settings seam only; no patching, uninstall-safe.",
+  "version": "0.2.0",
+  "description": "DSH plugin: keeps every llm-pi-ai route (custom providers included) in step with its endpoint's own /models — adds new models, fills contextWindow / maxTokens / input / reasoningEfforts, lets a route declare the thinking levels its endpoint never publishes, overrides the listing path, and makes the \"fetch available models\" button live for built-in providers too. Official settings seam only; no patching, uninstall-safe.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

@@ -1,7 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { effortMap, isAlias, translateEntry } from '../lib/translate.js';
+import { declaredEfforts, effortMap, isAlias, translateEntry } from '../lib/translate.js';
+
+test('an owner-declared dict becomes the same shape an endpoint answer produces', () => {
+  const declared = declaredEfforts({ low: 'low', medium: 'medium', high: 'high' });
+  assert.deepEqual(declared.efforts, { low: 'low', medium: 'medium', high: 'high' });
+  assert.deepEqual(declared.notes, []);
+});
+
+test('a valueless level other than "off" is refused, because DSH refuses the whole write', () => {
+  const declared = declaredEfforts({ off: null, high: null, low: 'low' });
+  assert.deepEqual(declared.efforts, { off: null, low: 'low' });
+  assert.deepEqual(declared.notes, ['reasoningEfforts.high 需要 wire 值；只有 off 可以为空']);
+});
+
+test('a declared level DSH cannot express is dropped and named', () => {
+  const declared = declaredEfforts({ ultra: 'ultra', high: 'high' });
+  assert.deepEqual(declared.efforts, { high: 'high' });
+  assert.deepEqual(declared.notes, ['unsupported effort "ultra" ignored']);
+});
+
+test('a declared dict that offers only "off" declares nothing', () => {
+  assert.equal(declaredEfforts({ off: 'none' }), undefined);
+  assert.equal(declaredEfforts({ off: null }), undefined);
+  assert.equal(declaredEfforts({}), undefined);
+  assert.equal(declaredEfforts(undefined), undefined);
+});
 
 /** The shape openrouter.ai/api/v1/models returned for deepseek/deepseek-v4.1-flash. */
 const V41_FLASH = {

@@ -13,6 +13,20 @@ test('normalizes the Anthropic root whether or not it carries /v1', () => {
   assert.equal(listingUrl('https://api.anthropic.com/v1', 'anthropic-messages'), 'https://api.anthropic.com/v1/models?limit=1000');
 });
 
+test('a listing path is appended to the base, with or without a leading slash', () => {
+  assert.equal(listingUrl('https://api.sensenova.cn/v1', 'openai-completions', '/llm/models'), 'https://api.sensenova.cn/v1/llm/models');
+  assert.equal(listingUrl('https://api.sensenova.cn/v1/', 'openai-completions', 'llm/models'), 'https://api.sensenova.cn/v1/llm/models');
+});
+
+test('an absolute listing URL is used verbatim, for a service whose roots differ', () => {
+  const url = 'https://api.sensenova.cn/v1/llm/models';
+  assert.equal(listingUrl('https://api.sensenova.cn/compatible-mode/v2', 'openai-completions', url), url);
+});
+
+test('an empty override keeps the protocol default', () => {
+  assert.equal(listingUrl('https://openrouter.ai/api/v1', 'openai-completions', ''), 'https://openrouter.ai/api/v1/models');
+});
+
 test('reads the standard data array', () => {
   const entries = parseListing({ data: [{ id: 'a/one' }, { id: 'a/two', name: 'Two' }] });
   assert.deepEqual(entries.map((entry) => entry.id), ['a/one', 'a/two']);

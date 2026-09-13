@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveTargets, userRoute } from '../lib/routes.js';
+import { resolveDiscoveryTargets, resolveTargets, userRoute } from '../lib/routes.js';
 
 const llmUser = {
   providers: {
@@ -142,6 +142,64 @@ test('a catalog that spans protocols still falls back, and stays listable', () =
   assert.equal(targets[0].catalogSharedApi, undefined);
   assert.equal(targets[0].api, 'openai-completions');
   assert.equal(targets[0].listable, true);
+});
+
+test('a route carries its declared efforts and listing path into the target', () => {
+  const targets = resolveTargets({
+    config: { mode: 'auto', routes: { sensenova: { efforts: { low: 'low' }, listingPath: '/llm/models' } } },
+    llmUser: { providers: { sensenova: { baseURL: 'https://api.sensenova.cn/v1', models: [{ id: 'sensenova-6.7-flash-lite' }] } } },
+  });
+  assert.deepEqual(targets[0].efforts, { low: 'low' });
+  assert.equal(targets[0].listingPath, '/llm/models');
+});
+
+test('and declares neither when the owner wrote neither', () => {
+  const targets = resolveTargets({ config: { mode: 'auto' }, llmUser: { providers: { local: { models: [] } } } });
+  assert.deepEqual(targets[0].efforts, {});
+  assert.equal(targets[0].listingPath, undefined);
+});
+
+test('a built-in provider joins the discovery scope before it is ever declared', () => {
+  const scope = resolveDiscoveryTargets({ config: { mode: 'auto' }, llmUser: { providers: {} }, builtin });
+  assert.deepEqual(routesOf(scope), ['openrouter', 'anthropic']);
+  assert.equal(scope[0].baseURL, 'https://openrouter.ai/api/v1');
+  assert.equal(scope[0].endpointSource, 'catalog');
+  assert.equal(scope[0].api, 'openai-completions');
+  assert.equal(scope[0].hasModelsList, false, 'there is no declared list, so this route is never written to');
+});
+
+test('but it never becomes a write target, so nothing is created behind the owner’s back', () => {
+  assert.deepEqual(resolveTargets({ config: { mode: 'auto' }, llmUser: { providers: {} }, builtin }), []);
+});
+
+test('a declared route appears once in the discovery scope, with its declared facts', () => {
+  const scope = resolveDiscoveryTargets({ config: { mode: 'auto' }, llmUser, builtin });
+  assert.deepEqual(routesOf(scope), ['local', 'openrouter-mobcool', 'openrouter', 'bare', 'anthropic']);
+  assert.equal(scope.find((target) => target.route === 'openrouter').baseURL, 'https://openrouter.ai/api/v1');
+});
+
+test('exclude and a per-route disable still narrow the discovery scope', () => {
+  const excluded = resolveDiscoveryTargets({ config: { mode: 'auto', exclude: ['anthropic'] }, llmUser: { providers: {} }, builtin });
+  assert.deepEqual(routesOf(excluded), ['openrouter']);
+  const perRoute = resolveDiscoveryTargets({
+    config: { mode: 'auto', routes: { anthropic: { enabled: false } } },
+    llmUser: { providers: {} },
+    builtin,
+  });
+  // `syncDiscovery` only adds enabled targets, so that is the list that matters.
+  assert.deepEqual(
+    perRoute.filter((target) => target.enabled).map((target) => target.route),
+    ['openrouter'],
+  );
+});
+
+test('listed mode keeps its promise and adds no catalog provider', () => {
+  const scope = resolveDiscoveryTargets({ config: { mode: 'listed', routes: { anthropic: {} } }, llmUser: { providers: {} }, builtin });
+  assert.deepEqual(routesOf(scope), ['anthropic'], 'only because the owner listed it, not because pi-ai ships it');
+});
+
+test('a disabled plugin owns no discovery scope at all', () => {
+  assert.deepEqual(resolveDiscoveryTargets({ config: { mode: 'auto', enabled: false }, llmUser: { providers: {} }, builtin }), []);
 });
 
 test('a protocol with no readable listing is marked unlistable', () => {

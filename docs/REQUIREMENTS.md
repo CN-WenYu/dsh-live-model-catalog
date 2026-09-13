@@ -56,6 +56,20 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 
 同一套"按路由键查目录"的逻辑，让自定义路由的视觉模型静默退化成纯文本（社区报告 #1992）。用户自己的 `amd-radeon` 路由实测就是这样（见 §6）。
 
+### 缺口 ④　端点自己不说推理能力（缺口 ② 的第三种情形）
+
+缺口 ② 假设"端点会报 `reasoning`，插件只是没去读"。还有一类端点**什么都不报**：商汤日日新的模型清单（`GET https://api.sensenova.cn/v1/llm/models`，见[官方文档](https://www.sensecore.cn/help/docs/model-as-a-service/nova/overview/Models/GetModelList)）只给 `id / object / type / owned_by / permission / root / parent / created_at / updated_at`——**没有上下文长度，没有任何 reasoning 字段**，且 `created_at` 是 ISO 字符串而非 unix `created`。实测把这份响应喂给插件的 `translateEntry`：
+
+```
+translateEntry(...) → {"id":"sensenova-6.7-flash-lite"}     // 只有 id
+planRoute(...).filled = []                                   // 一个字段都补不上
+planRoute(...).changed = false
+```
+
+同时商汤**不在 pi-ai 目录里**（`sense` / `nova` 匹配 0 个 provider、0 个模型），所以 §1 缺口 ② 那句"能力继承按路由键查目录"在这里连"孪生条目"都不存在。但商汤官方 OpenAI 兼容模式文档里 **`reasoning_effort: "medium"` 是正式请求参数**——即"该支持，但没有任何自动来源"。这类提供方（自建网关同理）只能由用户**按路由声明**档位，插件的责任是把它写进去、并在端点哪天开始报档位时让位。
+
+附带一个独立问题：插件（与 DSH 自己）对 `openai-completions` 拼的清单地址是 `{baseURL}/models`；商汤兼容模式的对话端点在 `/compatible-mode/v2`，模型清单却在 `/v1/llm/models`，**根都不一样**，按默认拼法必然 404。
+
 ### 社区与上游状态（说明"为什么不是等上游修"）
 
 - 官方讨论区已有多份同问题报告：[#122](https://github.com/deepseek-ai/deepseek-harness/discussions/122)、[#4071](https://github.com/deepseek-ai/deepseek-harness/discussions/4071)（标题同时命中两个缺口）、[#4685](https://github.com/deepseek-ai/deepseek-harness/discussions/4685)、[#3957](https://github.com/deepseek-ai/deepseek-harness/discussions/3957)。#4071 给出的根因分析与本文件 §1 完全一致。
@@ -77,6 +91,9 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 | **R7** | 可自行修复（本项目的**首要**动机） | ① 零构建步骤：`translate` / `merge` / `typing` / `listing` / `routes` 在**没有 `node_modules`** 时即可测试；② 不改 DSH 源码、不 patch 进程内模块、不 fork pi-ai（模块 B 是唯一受控例外：默认开启，但必须同时满足 R9 的四条不变量——契约探测、失败降级、运行期可关、范围现算）；③ 对 DSH / pi-ai 的所有耦合集中在 `lib/endpoints.js`（裸 import → 定位查找 → 失败降级）与 `lib/listing.js`（刻意对齐官方 discovery 的 URL/鉴权规则）两处，任何失效只降级为"该路由需要手写 `baseURL`"或"需要声明协议"，并在报告里可见；④ 离线测试秒级可跑 |
 | **R8** | 失败可见 | 每条路由的抓取/写入结果（成功/无变化/跳过/失败+原因）都出现在启动日志与 `/model-catalog` 输出里；**需要你动手处置的桶必须点名到 id**（新增、补齐、新增被拒、需声明协议、端点已不再列出），只有纯计数意义的桶（白名单外、早于 addSince）才允许只给数量 |
 | **R9** | 不侵入官方运行时 | 主路径只走官方 `ctx.settings.mutate`；唯一例外（修发现按钮）**可以默认开启**（分享场景要求"装上就有反应"，见 §5），但必须同时满足四条：① 启动探测契约，形状不符只告警不安装；② 任何失败只降级为官方答案；③ **运行期可关**并在关闭时原样放回官方发现；④ 受管范围每次调用现算，不冻结 |
+| **R10** | 端点沉默的能力可按路由声明（缺口 ④） | `routes.<name>.efforts` 声明档位后，该路由每条**已声明**且缺 `reasoningEfforts` 的模型条目都得到该 dict，报告对每条补齐给出来源说明；声明**只在该路由端点沉默时生效**，端点报出档位表即自动让位（无需删配置）；声明**不覆盖**任何已有 `reasoningEfforts`（含 `false`）；一个只含 `off` 或含非法 wire 值的声明**不写入**并在报告里说明，绝不产生会被 DSH 整体拒绝的字段 |
+| **R11** | 未声明的内置提供方，按钮也走端点（缺口 ① 的完整闭合） | 「获取可用模型」对 pi-ai 内置目录里的**全部** provider 走实时端点，**包括尚未写入 `llm-pi-ai.providers` 的那些**；该更宽范围**只回答发现、不写配置**（未声明路由没有 `models` 列表，不允许被创建）；`mode: listed` 保持窄范围承诺；协议不可列举的路由交回官方给出它自己的"请手工录入"提示，不去猜 URL |
+| **R12** | 清单地址可按路由覆盖 | `routes.<name>.listingPath` 支持相对路径（拼在 `baseURL` 后）与绝对 URL（原样使用），使对话端点与模型清单不同根的服务（商汤 `/compatible-mode/v2` + `/v1/llm/models`）也能被同步 |
 
 ## 3. 非目标（明确不做）
 
@@ -97,7 +114,10 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 - **列取协议来自路由事实，不是猜的**：`routes.<name>.api` → 路由 `api` → 目录里这些模型唯一一致的协议 → 兜底 `openai-completions`。列取的 URL 与鉴权都跟协议走，所以对一条内置 `anthropic` 路由（profile 里通常只写 `apiKeyEnv`）猜 `openai-completions`，会去请求 `api.anthropic.com/models` 并带 bearer，而不是 `/v1/models?limit=1000` + `x-api-key`——一条本来可管理的路由会变成每轮一个看不懂的失败（实测见 §6）。协议不在官方可列举集合内时**先判定再跳过**，不探测。
 - **新增闸门默认收紧、且失败即收紧**：`include` 默认空（只补不增——风险高的那一半必须显式开启）；`addSince` 默认 `'snapshot'` = 已装 pi-ai 目录自己的 `generatedAt`（读 `dist/providers/data/.manifest.json`），随 DSH 升级自走，取代会静默过期的硬编码日期。`snapshot` 读不到时**只补不增**并报告原因——**一个解析不了的闸门绝不允许变成敞开的闸门**。实测等价：`addSince: 'snapshot'` 与手写 `'2026-09-05'` 在快照日期为 2026-09-05 的机器上产出完全相同的计划。
 - **重试只针对传输失败**：HTTP 回答（含 401 / 404 / **429**）不重试——到达的回答就是答案，对 429 再问一次正是端点明令禁止的；`Retry-After` 原样进报告，而不是自己发明隐形退避。只有 DNS / 连接被拒 / 超时重试 1 次；调用方 `abort` 永不重试。失败既不加速下一轮也不加倍惩罚。
-- **唯一依赖** `schemastery`（DSH 注册 settings 命名空间必须要一个 schema），且只有 `lib/config.js` import 它。纯逻辑层（constants、apply、translate、merge、typing、plan、listing、routes、report）因此能**在没有 `node_modules` 的目录里直接跑**——实测把 `lib/` 与这 8 个纯层测试文件拷进空目录：**89 通过 / 0 失败**。只有接线测试（假 ctx + stub fetch）会经过 `config.js`，需要 schemastery 这一项依赖。
+- **唯一依赖** `schemastery`（DSH 注册 settings 命名空间必须要一个 schema），且只有 `lib/config.js` import 它。纯逻辑层（constants、apply、translate、merge、typing、plan、listing、routes、report）因此能**在没有 `node_modules` 的目录里直接跑**——实测把 `lib/` 与这 8 个纯层测试文件拷进空目录：**112 通过 / 0 失败**。只有接线测试（假 ctx + stub fetch）会经过 `config.js`，需要 schemastery 这一项依赖。
+- **两个范围，一宽一窄，且写不出去的范围只用于读**：写入范围 = 已声明路由 ∪ `routes` 点名（只有它们有 `models` 列表可补、可增）；发现范围 = 写入范围 ∪ pi-ai 内置目录的全部 provider。发现范围更宽是因为 R11 的场景（按钮最有用的时候正是还没添加那个内置提供方），而它**不写配置**——未声明路由没有 `models` 列表，`hasModelsList` 守卫在写入侧同样拦住它。`mode: listed` 对两者都保持窄语义。
+- **声明是"补端点没说的一半"，不是"覆盖端点"**：`routes.<name>.efforts` 只在端点沉默（没报 `reasoning` 对象或压根没列出该模型）时生效，优先级低于模型条目已有的 `reasoningEfforts`、低于端点自己的档位表、也低于端点"报了推理但没给档位表"时的 `defaultEfforts`。校验与端点路径**共用同一套**（`declaredEfforts` / `effortMap`）：非法 level、非 `off` 的空值一律丢弃并报告，因为 DSH 对模型条目整体校验，一个坏字段会拒掉整轮写入。声明只作用于**已声明条目**——本轮新发现的 id 不套用（新发现的一批可能混着不推理的模型），下一轮自愈时补上。
+- **不可列举的协议一律交回官方**：模块 B 的实时分支对 `listable === false` 的路由直接返回 `undefined`，让官方抛出它那句"请手工录入模型"，而不是拿 `openai-completions` 的 URL 去猜（R9②的同一条原则：只降级，不发明）。
 - **模块 B 的代价已知**：`llm` 服务只暴露 `llm/stream` 一个 waterfall，`registerModelDiscovery` 对同一命名空间会抛 `DUPLICATE_DISCOVERY`（`dsh-llm/lib/index.js:1924`），因此让"发现按钮"实时**没有官方扩展点**，只能包装 `llm.discoveries` 这张表（运行时可得，但无文档承诺）。因为默认开启，R9 的四条不变量是硬约束而非加分项。
 
 ## 5. 已实现的行为规格
@@ -116,7 +136,9 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 
 自愈：监听 `settings/updated`，`llm-pi-ai` 变化后 1.5 秒补一轮——因为 DSH 自己的"采纳"只拷 `id/name/contextWindow/maxTokens`（`client.js:538-545`），会丢掉 `input` 与 `reasoningEfforts`。
 
-**模块 B（`fixDiscovery`，默认开启）**：包装 `llm.discoveries['llm-pi-ai']`，对受管路由改走实时抓取，失败回退原函数；启动时探测契约，形状变了只告警不安装。开关在**运行期**即生效（关闭时把当初被包装的官方发现原样放回），且包装器的受管范围**每次调用现算**——后加的路由无需重装即被覆盖。
+**模块 B（`fixDiscovery`，默认开启）**：包装 `llm.discoveries['llm-pi-ai']`，对发现范围内的路由改走实时抓取，失败回退原函数；启动时探测契约，形状变了只告警不安装。开关在**运行期**即生效（关闭时把当初被包装的官方发现原样放回），包装器的范围**每次调用现算**——后加的路由无需重装即被覆盖。范围按 R11 取"已声明 ∪ 内置目录全部 provider"，不可列举的协议交回官方。报告在「发现按钮」行给出该范围的大小（`接管 N 条路由`），这是"按钮是否真的生效"的第一现场。
+
+**声明式补齐（R10/R12）**：`routes.<name>.efforts` 在端点沉默时补齐 `reasoningEfforts`，报告在对应 `~` 行下给出 `! 端点未提供推理档位表；已按本插件的路由档位声明补齐`；`routes.<name>.listingPath` 覆盖清单地址（相对路径拼 `baseURL`，绝对 URL 原样）。
 
 **范围（R4）**：`mode: auto` 纳管 `llm-pi-ai.providers` 下所有路由（`exclude` 排除）；列取协议解析顺序 = 插件覆盖 → 该路由 `api` → **目录唯一协议** → 兜底 `openai-completions`（集合外即跳过，不探测）；端点解析顺序 = 插件覆盖 → 该路由 `baseURL` → **pi-ai 内置提供方表**（运行时锚点先 `realpath` 再解析——PATH 上的 CLI 是符号链接，`createRequire` 不跟随它；随后通过对 `dsh-llm-pi-ai` 解析位置向上查找 `node_modules/@earendil-works/pi-ai` 定位，纯逻辑失败即降级为"该内置路由需要手写 baseURL"）。
 
@@ -124,11 +146,11 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 
 | 验证 | 结果 |
 |---|---|
-| 单元 + 接线测试 | `npm test` → 132 个用例：**130 通过、0 失败、2 跳过**（跳过的是两条"内置端点解析"用例，需 `DSH_CLI_ENTRY` 才运行，带上后 **132 全通过**）。覆盖：翻译、合并、轮次规划的两遍决策、列表解析、范围解析、端点与目录协议解析、路由协议判定、addSince 解析、报告渲染、发现包装的安装/还原/范围现算，以及用假 ctx + stub fetch 跑通 `apply()` 全链路（含协议补写、协议冲突拒绝、写入被整体拒绝后退回补齐、运行期关闭发现开关、后加路由进入实时范围、HTTP 拒绝不重试与传输失败重试一次）；`npm run check` 通过 |
+| 单元 + 接线测试 | `npm test` → 163 个用例：**158 通过、0 失败、5 跳过**（跳过的是两条"内置端点解析"用例与三条 `test/discovery-scope.test.mjs`——后者要真实 pi-ai 目录才能验证"未声明的内置提供方也走端点"；两者都由 `DSH_CLI_ENTRY` 驱动，带上后 **163 全通过**，已实测）。覆盖：翻译、合并、轮次规划的两遍决策、列表解析、范围解析、端点与目录协议解析、路由协议判定、addSince 解析、报告渲染、发现包装的安装/还原/范围现算，以及用假 ctx + stub fetch 跑通 `apply()` 全链路（含协议补写、协议冲突拒绝、写入被整体拒绝后退回补齐、运行期关闭发现开关、后加路由进入实时范围、HTTP 拒绝不重试与传输失败重试一次）；0.2.0 新增覆盖：`declaredEfforts` 的非法值处理、端点沉默/未列出两种情形下的声明补齐与"端点优先"、`resolveDiscoveryTargets` 的宽范围与 `listed`/`exclude`/`enabled:false` 边界、`listingPath` 两种拼法、每个补齐的说明行渲染、不可列举协议交回官方；`npm run check` 通过 |
 | 协议闸门（只读演练，真实 settings + 真实 openrouter 端点） | 未声明 `routes.openrouter.api` 时：`openrouter` 只写 5 条补齐、报告 `需声明协议 1` 并点名 `deepseek/deepseek-v4.1-flash` 与处置，**不写 v4.1**；声明 `routes.openrouter.api: openai-completions` 后：一笔写入两个 op（`api` + 6 条 models，含 `deepseek/deepseek-v4.1-flash`），报告 `+ deepseek/deepseek-v4.1-flash` 与"已补写 api"。两次演练均未落盘 |
 | 只读演练（真实 settings + 真实凭据） | `local` 线上 14 / `openrouter-mobcool` 439（补齐 5）/ `amd-radeon` 5（补齐 3 个 `input`）/ `openrouter[catalog]` 439（补齐 5） |
 | ⚠️ 上一条对 `openrouter` 的"新增 `deepseek/deepseek-v4.1-flash`"曾被当成已验证 | **是错的**：`openrouter` 的目录跨 `openai-completions` / `anthropic-messages` 两种协议、路由自己没声明 `api`，DSH 的严格写入校验会以 `model "…" needs an api` **整体拒绝**该笔写入（连 5 条补齐一起丢）。只读演练不经过 `settings.mutate`，所以没暴露。现已修复，见下行 |
-| 无 `node_modules` 可测（R7①） | 把 `lib/` 与 `test/{apply,merge,typing,plan,translate,listing,routes,report}.test.mjs` 拷到空目录后 `node --test`：**89 通过 / 0 失败**（该目录下确实没有 `node_modules`） |
+| 无 `node_modules` 可测（R7①） | 把 `lib/` 与 `test/{apply,merge,typing,plan,translate,listing,routes,report}.test.mjs` 拷到空目录后 `node --test`：**112 通过 / 0 失败**（该目录下确实没有 `node_modules`） |
 | `addSince` 闸门 | 不加时白名单会一次新增 68 个历史模型；加 `2026-09-05` 后降为 0（只保留真正比快照新的） |
 | 列取协议推导（用真实 pi-ai 目录跑 `resolveTargets`） | 未声明 `api` 的内置路由：`anthropic` → `anthropic-messages`（`https://api.anthropic.com/v1/models?limit=1000`）、`deepseek` → `openai-completions`、`google` → `google-generative-ai`（**判为不可列举 → 跳过，不发这次请求**）。修复前三条都会用 `openai-completions`：`anthropic` 会请求 `api.anthropic.com/models` 并带 bearer，是一轮一个看不懂的失败 |
 | 分享默认值实测（**schema 默认值** + 真实 settings + 真实 openrouter 端点） | 目录 366 / 线上 443 / 目录外 85。默认组合（`include: ['*']`、`addSince: 'snapshot'`、`skipAliases: true`、`fixDiscovery: true`）第一轮：**新增 7 条真实新模型**（`sakana/*`×2、`inclusionai/*`×2、`inception/*`、`nex-agi/*`×2），**跳过 16 条端点别名并逐条点名**，**415 条早于快照**被闸门挡住，发现按钮 `installed`。对比 `include: ['deepseek/*','qwen/*']` 只新增 1 条——对用 openai/anthropic 的人等于没反应，这是默认改用 `['*']` 的依据 |
@@ -138,6 +160,8 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 | ⚠️ **内置端点解析在生产形态下必然失败**（本轮由用户实测暴露，已修） | 真实进程的 `process.argv[1]` 是 `~/.npm-global/bin/dsh`——**PATH 上的符号链接**，而 `createRequire` 不跟随符号链接 → `MODULE_NOT_FOUND` → 目录定位失败 → `openrouter`（settings 未写 `baseURL`，靠目录）每轮 `失败（no baseURL）`，**什么都不写**。此前所有演练都把 `argv[1]` 换成真实路径，因此从未复现。修复：锚点增加 `realpathSync` 变体；回归测试**用符号链接**跑（`builtinEndpoints(link)`）。修复后同一锚点：`pi-ai providers: 32 (anchored)`，`openrouter` 端点来自 catalog，计划 `+ deepseek/deepseek-v4.1-flash` |
 | R5 并发冲突（接线） | 首笔以 revision 2 被拒（模拟 GUI 同时改名并推进到 9）→ 重读重算 → 第二笔带 revision 9，**保留它没见过的改名**，且仍带新增（证明走的是冲突重试而非"只写补齐"降级） |
 | `addSince: snapshot` 等价性（只读演练，真实 settings + 真实 pi-ai） | 解析出 `generatedAt = 2026-09-05T11:58:56.761Z`；与手写 `'2026-09-05'` 产出**完全相同**的计划（新增 1 = `deepseek/deepseek-v4.1-flash`）。pi-ai 快照无法定位时：只补不增 + 报告写明原因（有单测钉住） |
+| ⚠️ **内置 provider 未声明时按钮仍回快照**（漏洞，0.2.0 修） | 旧实现把「发现范围」等同于「写入范围」= `llm-pi-ai.providers` 的键 ∪ `routes` 的键。而 DSH 会把 pi-ai 的**全部** provider 列在「模型」页（`directoryEntries` 遍历 `catalogProviderIds()`），点这些还没添加的卡片时 `request.provider` 是那个 id，`isManaged` 为假 → 放行 → 官方 `discoverModels` 命中内置目录短路 → **快照**。用真实目录跑 `resolveTargets({providers:{}})` 得 **0 条**，即"一个都没管"。修复：新增 `resolveDiscoveryTargets`（未声明 provider 用目录 baseURL + 目录共识协议合成 target，只读不写）。同一目录下现在得 **32 条**（29 条可列举）。接线演练（真实 pi-ai 目录 + stub fetch，只声明了一条非内置路由）：问未声明的内置 `deepseek` → 实际请求 `https://api.deepseek.com/models` 并返回线上 3 条（**不再回快照**）；问 `google`（不可列举）→ 交回官方答案且**不发请求**；报告 `内置端点：pi-ai providers: 32 (anchored)`、`发现按钮：installed（接管 33 条路由）` |
+| ⚠️ **端点不报推理 → 插件静默什么都不补**（缺口 ④ 实测，0.2.0 修） | 把商汤文档的 `/v1/llm/models` 响应形状喂给 `translateEntry`：输出只有 `{"id":…}`，`planRoute().filled = []`、`changed = false`——能力一个都补不上，思考档位自然永远不出现。且 `sense`/`nova` 在 pi-ai 目录里匹配 **0** 个 provider / 0 个模型，继承路径也断。修复：`routes.<name>.efforts` 声明 + `listingPath` 覆盖；单测与接线测试各钉住一条 |
 | 安装 | `dsh plugin --profile web add link:...` 成功；`bundles` 已含本插件；`node_modules` 是 symlink（改代码即时生效）；`dsh --profile web --dump-config` 已包含 `id: live-model-catalog` |
 | 尚未验证 | **真实 profile 运行**（进程未重启，插件未加载；磁盘上的 `settings.yaml` 至今未被插件写过） |
 
@@ -174,7 +198,7 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 ## 8. 审查指南（建议按此顺序）
 
 1. **复核根因**：打开 §1 引用的行号，确认两个缺口的描述与代码一致；如有出入，指出。
-2. **质疑需求**：R1–R9 有没有遗漏？（例如成本字段、缓存命中语义、子 agent 的模型/档位继承、多 profile、`/model` 命令与 UI 的一致性）
+2. **质疑需求**：R1–R12 有没有遗漏？（例如成本字段、缓存命中语义、子 agent 的模型/档位继承、多 profile、`/model` 命令与 UI 的一致性）
 3. **质疑非目标**：§3 里哪一条其实应该做？
 4. **质疑验收标准**：哪条不可判定或不可复现？
 5. **质疑实现是否满足需求**：重点看 `lib/merge.js`（只增只改是否真的安全）、`lib/typing.js`（协议闸门与"改写既有模型协议"的安全核对）、`lib/apply.js`（写路径与冲突处理）、`lib/index.js`（生命周期、自愈是否会成环）、`lib/discovery.js`（契约探测、运行期还原、范围是否冻结）。
@@ -183,7 +207,7 @@ if (efforts === void 0) return { reasoning: base?.reasoning ?? false };   // :56
 ## 9. 复现与自测命令
 
 ```sh
-npm test                 # 132 个离线用例，不联网
+npm test                 # 163 个离线用例，不联网
 npm run check            # 语法检查
 DSH_CLI_ENTRY="$(command -v dsh | xargs realpath)" npm test   # 额外覆盖内置端点解析
 # 注意：只读演练若要复现生产，argv[1] 必须是 PATH 上的符号链接（`command -v dsh`），

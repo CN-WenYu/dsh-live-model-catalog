@@ -39,6 +39,21 @@ test('names every model the endpoint dropped instead of only counting them', () 
   assert.match(text, /端点已不再列出（保留未删除）：auto、minimax\/minimax-m2\.7:free、z-ai\/glm-5\.2:free/);
 });
 
+test('prints each fill with the translation note that explains it', () => {
+  const text = renderReport(
+    makeReport([
+      route({
+        filled: [
+          { id: 'sensenova-6.7-flash-lite', fields: ['reasoningEfforts'], notes: ['端点未提供推理档位表；已按本插件的路由档位声明补齐'] },
+          { id: 'qwen/qwen3.8-flash', fields: ['input', 'reasoningEfforts'], notes: ['unsupported effort "ultra" ignored'] },
+        ],
+      }),
+    ]),
+  );
+  assert.match(text, /~ sensenova-6\.7-flash-lite → reasoningEfforts\n      ! 端点未提供推理档位表；已按本插件的路由档位声明补齐/);
+  assert.match(text, /~ qwen\/qwen3\.8-flash → input, reasoningEfforts\n      ! unsupported effort "ultra" ignored/);
+});
+
 test('names the aliases it refused to pin', () => {
   const text = renderReport(makeReport([route({ aliases: ['~openai/gpt-astra-latest'] })]));
   assert.match(text, /跳过别名 1/);
