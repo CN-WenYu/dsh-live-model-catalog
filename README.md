@@ -210,7 +210,7 @@ DSH 给一个模型定协议的顺序是 **路由 `api` → 目录里同 id 条�
 
 | 做法 | 步骤 |
 |---|---|
-| **让插件写**（推荐） | ① 先在 GUI 里**采纳一次目录里已有的模型**（这一步会成功，那些模型在目录里有生条目）→ ② 加 `routes.<name>.api: openai-completions` → ③ `/model-catalog sync`，插件把 `api` 与目录外的新模型**同笔写入** |
+| **让插件写**（推荐） | ① 先在 GUI 里**采纳一次目录里已有的模型**（这一步会成功，那些模型在目录里有孪生条目）→ ② 加 `routes.<name>.api: openai-completions` → ③ `/model-catalog sync`，插件把 `api` 与目录外的新模型**同笔写入** |
 | **自己写一行** | 直接在 `~/.dsh/settings.yaml` 的 `llm-pi-ai.providers.<route>` 下加 `api: openai-completions`（DSH 的「模型」页对内置 provider 不渲染协议选择框，所以只能这样声明） |
 
 ### 端点不说推理：`routes.<name>.efforts`
